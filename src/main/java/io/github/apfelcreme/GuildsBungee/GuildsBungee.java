@@ -3,11 +3,10 @@ package io.github.apfelcreme.GuildsBungee;
 import com.google.common.io.ByteArrayDataOutput;
 import com.google.common.io.ByteStreams;
 import net.md_5.bungee.api.ProxyServer;
-import net.md_5.bungee.api.chat.ComponentBuilder;
+import net.md_5.bungee.api.chat.TextComponent;
 import net.md_5.bungee.api.config.ServerInfo;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
 import net.md_5.bungee.api.connection.Server;
-import net.md_5.bungee.api.event.LoginEvent;
 import net.md_5.bungee.api.event.PlayerDisconnectEvent;
 import net.md_5.bungee.api.event.PluginMessageEvent;
 import net.md_5.bungee.api.event.PostLoginEvent;
@@ -172,7 +171,7 @@ public class GuildsBungee extends Plugin implements Listener {
      */
     private void sendSingleMessage(UUID uuid, String message) {
         if (getProxy().getPlayer(uuid) != null) {
-            getProxy().getPlayer(uuid).sendMessage(new ComponentBuilder(message).create());
+            getProxy().getPlayer(uuid).sendMessage(TextComponent.fromLegacyText(message));
         }
     }
 
