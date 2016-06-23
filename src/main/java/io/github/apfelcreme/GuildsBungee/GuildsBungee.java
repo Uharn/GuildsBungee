@@ -10,6 +10,7 @@ import net.md_5.bungee.api.connection.Server;
 import net.md_5.bungee.api.event.PlayerDisconnectEvent;
 import net.md_5.bungee.api.event.PluginMessageEvent;
 import net.md_5.bungee.api.event.PostLoginEvent;
+import net.md_5.bungee.api.event.ServerSwitchEvent;
 import net.md_5.bungee.api.plugin.Listener;
 import net.md_5.bungee.api.plugin.Plugin;
 import net.md_5.bungee.event.EventHandler;
@@ -18,6 +19,11 @@ import java.io.*;
 import java.net.InetSocketAddress;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -42,10 +48,7 @@ import java.util.regex.Pattern;
  */
 public class GuildsBungee extends Plugin implements Listener {
 
-    /**
-     * the plugin instance
-     */
-    private static GuildsBungee instance = null;
+    Map<Operation, QueueingPluginMessage> pmQueue = new HashMap<Operation, QueueingPluginMessage>();
 
     @Override
     public void onEnable() {
@@ -67,6 +70,8 @@ public class GuildsBungee extends Plugin implements Listener {
         String guild;
         UUID uuid;
         String message;
+        String players;
+        ByteArrayDataOutput out = null;
 
         switch (operation) {
             case SendGuildChannelBroadcast:
@@ -85,18 +90,34 @@ public class GuildsBungee extends Plugin implements Listener {
                 sendSingleMessage(uuid, message);
                 break;
             case SyncGuilds:
-                makeServersSyncGuilds();
+                out = ByteStreams.newDataOutput();
+                out.writeUTF("syncGuilds");
+                players = "";
+                for (ProxiedPlayer proxiedPlayer : ProxyServer.getInstance().getPlayers()) {
+                    players += proxiedPlayer.getUniqueId().toString() + " ";
+                }
+                out.writeUTF(players.trim());
                 break;
             case SyncGuild:
                 int guildId = in.readInt();
-                makeServersSyncGuild(guildId);
+                out = ByteStreams.newDataOutput();
+                out.writeUTF("syncGuild");
+                out.writeInt(guildId);
+                players = "";
+                for (ProxiedPlayer proxiedPlayer : ProxyServer.getInstance().getPlayers()) {
+                    players += proxiedPlayer.getUniqueId().toString() + " ";
+                }
+                out.writeUTF(players.trim());
                 break;
             case SyncAlliances:
-                makeServersSyncAlliances();
+                out = ByteStreams.newDataOutput();
+                out.writeUTF("syncAlliances");
                 break;
             case SyncAlliance:
                 int allianceId = in.readInt();
-                makeServersSyncAlliance(allianceId);
+                out = ByteStreams.newDataOutput();
+                out.writeUTF("syncAlliance");
+                out.writeInt(allianceId);
                 break;
             case SendPlayerToGuildHome:
                 uuid = UUID.fromString(in.readUTF());
@@ -104,6 +125,48 @@ public class GuildsBungee extends Plugin implements Listener {
                 String homeServer = in.readUTF();
                 sendPlayerToGuildHome(uuid, guild, homeServer, (Server) e.getSender());
                 break;
+        }
+
+        // it works but isn't the nicest way to determinate if this message is a queueing one
+        if (out != null) {
+            QueueingPluginMessage pm = new QueueingPluginMessage(operation, out);
+            for (ServerInfo serverInfo : getProxy().getServers().values()) {
+                if (serverInfo.getPlayers().size() > 0) {
+                    pm.send(serverInfo);
+                }
+            }
+            if (pm.getSendTo().size() < getProxy().getServers().size()) {
+                // plugin message wasn't sent to all servers because no players where online, queue it
+                pmQueue.put(pm.getOperation(), pm);
+            } else {
+                // remove previously queued plugin message if we already send a newer one
+                pmQueue.remove(pm.getOperation());
+            }
+        }
+    }
+
+    /**
+     * Send queued plugin messages on server switch.
+     * The logic inside QueuingPluginMessage.send(ServerInfo) will prevent
+     * that it will be send to a server to which it was already send to!
+     *
+     * @param event the event
+     */
+    @EventHandler
+    public void onPlayerServerSwitch(ServerSwitchEvent event) {
+        Iterator<QueueingPluginMessage> it = pmQueue.values().iterator();
+        while (it.hasNext()) {
+            QueueingPluginMessage pm = it.next();
+            if(pm != null) {
+                pm.send(event.getPlayer().getServer().getInfo());
+
+                // This is a really lazy check but should be enough to determinate
+                // whether or not we sent the plugin message to all the servers
+                if (pm.getSendTo().size() >= getProxy().getServers().size()) {
+                    // remove it from the queue
+                    it.remove();
+                }
+            }
         }
     }
 
@@ -216,67 +279,6 @@ public class GuildsBungee extends Plugin implements Listener {
     }
 
     /**
-     * forces all servers to sync the guilds
-     */
-    protected static void makeServersSyncGuilds() {
-        for (ServerInfo serverInfo : ProxyServer.getInstance().getServers().values()) {
-            ByteArrayDataOutput out = ByteStreams.newDataOutput();
-            out.writeUTF("syncGuilds");
-            String players = "";
-            for (ProxiedPlayer proxiedPlayer : ProxyServer.getInstance().getPlayers()) {
-                players += proxiedPlayer.getUniqueId().toString()+" ";
-            }
-            out.writeUTF(players.trim());
-            serverInfo.sendData("Guilds", out.toByteArray());
-        }
-    }
-
-    /**
-     * forces all servers to sync the guild
-     *
-     * @param guildId the guild id
-     */
-    protected static void makeServersSyncGuild(int guildId) {
-        for (ServerInfo serverInfo : ProxyServer.getInstance().getServers().values()) {
-            ByteArrayDataOutput out = ByteStreams.newDataOutput();
-            out.writeUTF("syncGuild");
-            out.writeInt(guildId);
-            String players = "";
-            for (ProxiedPlayer proxiedPlayer : ProxyServer.getInstance().getPlayers()) {
-                players += proxiedPlayer.getUniqueId().toString()+" ";
-            }
-            out.writeUTF(players.trim());
-            serverInfo.sendData("Guilds", out.toByteArray());
-        }
-    }
-
-    /**
-     * distributes a message to all servers that makes them reload the list of alliances
-     */
-    public static void makeServersSyncAlliances() {
-        for (ServerInfo serverInfo : ProxyServer.getInstance().getServers().values()) {
-            ByteArrayDataOutput out = ByteStreams.newDataOutput();
-            out.writeUTF("syncAlliances");
-            serverInfo.sendData("Guilds", out.toByteArray());
-        }
-    }
-
-    /**
-     * makes all servers reload the given alliance
-     *
-     * @param allianceId the alliance id
-     */
-    public static void makeServersSyncAlliance(int allianceId) {
-        for (ServerInfo serverInfo : ProxyServer.getInstance().getServers().values()) {
-            ByteArrayDataOutput out = ByteStreams.newDataOutput();
-            out.writeUTF("syncAlliance");
-            out.writeInt(allianceId);
-            serverInfo.sendData("Guilds", out.toByteArray());
-        }
-
-    }
-
-    /**
      * returns the server info with the given ip (xxx.xxx.xxx.xxx:PORT)
      *
      * @param homeServerIP the ip:port
@@ -297,4 +299,44 @@ public class GuildsBungee extends Plugin implements Listener {
         SendMessage, SendPlayerToGuildHome
     }
 
+    private class QueueingPluginMessage {
+        private final Operation operation;
+        private final ByteArrayDataOutput out;
+
+        private Set<String> sendTo = new HashSet<String>();
+
+        public QueueingPluginMessage(Operation operation, ByteArrayDataOutput out) {
+            this.operation = operation;
+            this.out = out;
+        }
+
+        /**
+         * Send this plugin message to a specific server, but only if it wasn't already send to it
+         *
+         * @param serverInfo The info of the server to send it to
+         * @return true if it was sent, false if it was already sent to that server
+         */
+        public boolean send(ServerInfo serverInfo) {
+            if (!sendTo.contains(serverInfo.getName())) {
+                sendTo.add(serverInfo.getName());
+                serverInfo.sendData("Guilds", out.toByteArray());
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * @return The Operation this plugin message performs
+         */
+        public Operation getOperation() {
+            return operation;
+        }
+
+        /**
+         * @return The Set of names of servers this plugin message was send to
+         */
+        public Set<String> getSendTo() {
+            return sendTo;
+        }
+    }
 }
