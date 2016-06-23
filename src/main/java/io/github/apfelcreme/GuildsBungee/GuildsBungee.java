@@ -88,14 +88,14 @@ public class GuildsBungee extends Plugin implements Listener {
                 makeServersSyncGuilds();
                 break;
             case SyncGuild:
-                Integer guildId = in.readInt();
+                int guildId = in.readInt();
                 makeServersSyncGuild(guildId);
                 break;
             case SyncAlliances:
                 makeServersSyncAlliances();
                 break;
             case SyncAlliance:
-                Integer allianceId = in.readInt();
+                int allianceId = in.readInt();
                 makeServersSyncAlliance(allianceId);
                 break;
             case SendPlayerToGuildHome:
@@ -236,7 +236,7 @@ public class GuildsBungee extends Plugin implements Listener {
      *
      * @param guildId the guild id
      */
-    protected static void makeServersSyncGuild(Integer guildId) {
+    protected static void makeServersSyncGuild(int guildId) {
         for (ServerInfo serverInfo : ProxyServer.getInstance().getServers().values()) {
             ByteArrayDataOutput out = ByteStreams.newDataOutput();
             out.writeUTF("syncGuild");
@@ -266,7 +266,7 @@ public class GuildsBungee extends Plugin implements Listener {
      *
      * @param allianceId the alliance id
      */
-    public static void makeServersSyncAlliance(Integer allianceId) {
+    public static void makeServersSyncAlliance(int allianceId) {
         for (ServerInfo serverInfo : ProxyServer.getInstance().getServers().values()) {
             ByteArrayDataOutput out = ByteStreams.newDataOutput();
             out.writeUTF("syncAlliance");
