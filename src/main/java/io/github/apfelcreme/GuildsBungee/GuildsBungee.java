@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Guilds
@@ -48,17 +49,20 @@ import java.util.regex.Pattern;
  */
 public class GuildsBungee extends Plugin implements Listener {
 
-    Map<Operation, QueueingPluginMessage> pmQueue = new HashMap<Operation, QueueingPluginMessage>();
+    Map<String, QueueingPluginMessage> pmQueue = new HashMap<>();
 
     @Override
     public void onEnable() {
-        getProxy().registerChannel("Guilds");
+        getProxy().registerChannel("guilds:sync");
+        getProxy().registerChannel("guilds:player");
+        getProxy().registerChannel("guilds:broadcast");
+        getProxy().registerChannel("guilds:error");
         getProxy().getPluginManager().registerListener(this, this);
     }
 
     @EventHandler
     public void onPluginMessageReceived(PluginMessageEvent e) throws IOException {
-        if (!e.getTag().equals("Guilds")) {
+        if (!e.getTag().startsWith("guilds:")) {
             return;
         }
         if (!(e.getSender() instanceof Server)) {
@@ -66,16 +70,14 @@ public class GuildsBungee extends Plugin implements Listener {
         }
         ByteArrayInputStream stream = new ByteArrayInputStream(e.getData());
         DataInputStream in = new DataInputStream(stream);
-        Operation operation = Operation.valueOf(in.readUTF());
+        String operation = e.getTag().split(":")[1];
+        String[] args = in.readUTF().split(" ");
         String guild;
         UUID uuid;
         String message;
-        String players;
-        ByteArrayDataOutput out = null;
 
         switch (operation) {
-            case SendGuildChannelBroadcast:
-            case SendAllianceChannelBroadcast:
+            case "broadcast":
                 String[] uuids = in.readUTF().split(Pattern.quote(","));
                 message = in.readUTF();
                 for (String uuidString : uuids) {
@@ -84,64 +86,70 @@ public class GuildsBungee extends Plugin implements Listener {
                 }
                 log(message);
                 break;
-            case SendMessage:
+            case "player":
                 uuid = UUID.fromString(in.readUTF());
-                message = in.readUTF();
-                sendSingleMessage(uuid, message);
-                break;
-            case SyncGuilds:
-                out = ByteStreams.newDataOutput();
-                out.writeUTF("syncGuilds");
-                players = "";
-                for (ProxiedPlayer proxiedPlayer : ProxyServer.getInstance().getPlayers()) {
-                    players += proxiedPlayer.getUniqueId().toString() + " ";
+                if (args[0].equals("message")) {
+                    message = in.readUTF();
+                    sendSingleMessage(uuid, message);
+                } else if (args[0].equals("guildhome")) {
+                    guild = in.readUTF();
+                    String homeServer = in.readUTF();
+                    sendPlayerToGuildHome(uuid, guild, homeServer, (Server) e.getSender());
                 }
-                out.writeUTF(players.trim());
                 break;
-            case SyncGuild:
-                int guildId = in.readInt();
-                out = ByteStreams.newDataOutput();
-                out.writeUTF("syncGuild");
-                out.writeInt(guildId);
-                players = "";
-                for (ProxiedPlayer proxiedPlayer : ProxyServer.getInstance().getPlayers()) {
-                    players += proxiedPlayer.getUniqueId().toString() + " ";
+            case "sync":
+                switch (args[0]) {
+                    case "guilds":
+                        sendQueueingMessage("sync", "guilds",
+                                getProxy().getPlayers().stream().map(p -> p.getUniqueId().toString()).collect(Collectors.joining(" ")));
+                        break;
+                    case "guild":
+                        sendQueueingMessage("sync", "guild",
+                                in.readInt(),
+                                getProxy().getPlayers().stream().map(p -> p.getUniqueId().toString()).collect(Collectors.joining(" ")));
+                        break;
+                    case "alliances":
+                        sendQueueingMessage("sync", "alliances");
+                        break;
+                    case "alliance":
+                        sendQueueingMessage("sync", "alliance", in.readInt());
+                        break;
                 }
-                out.writeUTF(players.trim());
-                break;
-            case SyncAlliances:
-                out = ByteStreams.newDataOutput();
-                out.writeUTF("syncAlliances");
-                break;
-            case SyncAlliance:
-                int allianceId = in.readInt();
-                out = ByteStreams.newDataOutput();
-                out.writeUTF("syncAlliance");
-                out.writeInt(allianceId);
-                break;
-            case SendPlayerToGuildHome:
-                uuid = UUID.fromString(in.readUTF());
-                guild = in.readUTF();
-                String homeServer = in.readUTF();
-                sendPlayerToGuildHome(uuid, guild, homeServer, (Server) e.getSender());
                 break;
         }
+    }
 
-        // it works but isn't the nicest way to determinate if this message is a queueing one
-        if (out != null) {
-            QueueingPluginMessage pm = new QueueingPluginMessage(operation, out);
-            for (ServerInfo serverInfo : getProxy().getServers().values()) {
-                if (serverInfo.getPlayers().size() > 0) {
-                    pm.send(serverInfo);
+    private void sendQueueingMessage(String operation, String args, Object... write) {
+        ByteArrayDataOutput out = ByteStreams.newDataOutput();
+        out.writeUTF(args);
+        for (Object w : write) {
+            if (w instanceof String) {
+                out.writeUTF((String) w);
+            } else if (w instanceof Integer) {
+                out.writeInt((Integer) w);
+            } else {
+                try (ByteArrayOutputStream bos = new ByteArrayOutputStream ();
+                     ObjectOutputStream oOut = new ObjectOutputStream(bos)){
+                    oOut.writeObject(w);
+                    out.write(bos.toByteArray());
+                } catch (IOException e) {
+                    e.printStackTrace();
                 }
             }
-            if (pm.getSendTo().size() < getProxy().getServers().size()) {
-                // plugin message wasn't sent to all servers because no players where online, queue it
-                pmQueue.put(pm.getOperation(), pm);
-            } else {
-                // remove previously queued plugin message if we already send a newer one
-                pmQueue.remove(pm.getOperation());
+        }
+
+        QueueingPluginMessage pm = new QueueingPluginMessage(operation, args, out);
+        for (ServerInfo serverInfo : getProxy().getServers().values()) {
+            if (serverInfo.getPlayers().size() > 0) {
+                pm.send(serverInfo);
             }
+        }
+        if (pm.getSendTo().size() < getProxy().getServers().size()) {
+            // plugin message wasn't sent to all servers because no players where online, queue it
+            pmQueue.put(pm.getCommand(), pm);
+        } else {
+            // remove previously queued plugin message if we already send a newer one
+            pmQueue.remove(pm.getCommand());
         }
     }
 
@@ -199,9 +207,9 @@ public class GuildsBungee extends Plugin implements Listener {
     public void sendPlayerStatusChange(UUID uuid, boolean isOnline) {
         for (ServerInfo serverInfo : ProxyServer.getInstance().getServers().values()) {
             ByteArrayDataOutput out = ByteStreams.newDataOutput();
-            out.writeUTF(isOnline ? "PlayerJoined" : "PlayerDisconnected");
+            out.writeUTF(isOnline ? "joined" : "disconnected");
             out.writeUTF(uuid.toString());
-            serverInfo.sendData("Guilds", out.toByteArray());
+            serverInfo.sendData("guilds:player", out.toByteArray());
         }
     }
 
@@ -262,19 +270,19 @@ public class GuildsBungee extends Plugin implements Listener {
                     }
                 } else {
                     ByteArrayDataOutput out = ByteStreams.newDataOutput();
-                    out.writeUTF("HomeServerUnreachable");
+                    out.writeUTF("homeServerUnreachable");
                     out.writeUTF(uuid.toString());
-                    source.sendData("Guilds", out.toByteArray());
+                    source.sendData("guilds:error", out.toByteArray());
                     return;
                 }
             }
         }
         ByteArrayDataOutput out = ByteStreams.newDataOutput();
-        out.writeUTF("SendPlayerHome");
+        out.writeUTF("home");
         out.writeUTF(uuid.toString());
         out.writeUTF(guild);
         if (target != null) {
-            target.sendData("Guilds", out.toByteArray());
+            target.sendData("guilds:player", out.toByteArray());
         }
     }
 
@@ -293,20 +301,16 @@ public class GuildsBungee extends Plugin implements Listener {
         return null;
     }
 
-    public enum Operation {
-        SendGuildChannelBroadcast, SendAllianceChannelBroadcast,
-        SyncGuilds, SyncGuild, SyncAlliances, SyncAlliance,
-        SendMessage, SendPlayerToGuildHome
-    }
-
     private class QueueingPluginMessage {
-        private final Operation operation;
+        private final String operation;
+        private final String args;
         private final ByteArrayDataOutput out;
 
-        private Set<String> sendTo = new HashSet<String>();
+        private Set<String> sendTo = new HashSet<>();
 
-        public QueueingPluginMessage(Operation operation, ByteArrayDataOutput out) {
+        public QueueingPluginMessage(String operation, String args, ByteArrayDataOutput out) {
             this.operation = operation;
+            this.args = args;
             this.out = out;
         }
 
@@ -319,7 +323,7 @@ public class GuildsBungee extends Plugin implements Listener {
         public boolean send(ServerInfo serverInfo) {
             if (!sendTo.contains(serverInfo.getName())) {
                 sendTo.add(serverInfo.getName());
-                serverInfo.sendData("Guilds", out.toByteArray());
+                serverInfo.sendData("guilds:" + operation, out.toByteArray());
                 return true;
             }
             return false;
@@ -328,8 +332,8 @@ public class GuildsBungee extends Plugin implements Listener {
         /**
          * @return The Operation this plugin message performs
          */
-        public Operation getOperation() {
-            return operation;
+        public String getCommand() {
+            return operation + ":" + args;
         }
 
         /**

@@ -6,11 +6,13 @@
 
     <groupId>io.github.apfelcreme</groupId>
     <artifactId>GuildsBungee</artifactId>
-    <version>1.1-SNAPSHOT</version>
+    <version>1.2-SNAPSHOT</version>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <minecraft.plugin.version>${project.version} ${buildDescription}</minecraft.plugin.version>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <maven.compiler.source>1.8</maven.compiler.source>
     </properties>
 
     <repositories>
