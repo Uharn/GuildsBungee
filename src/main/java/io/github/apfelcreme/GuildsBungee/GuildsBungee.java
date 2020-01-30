@@ -53,10 +53,6 @@ public class GuildsBungee extends Plugin implements Listener {
 
     @Override
     public void onEnable() {
-        getProxy().registerChannel("guilds:sync");
-        getProxy().registerChannel("guilds:player");
-        getProxy().registerChannel("guilds:broadcast");
-        getProxy().registerChannel("guilds:error");
         getProxy().getPluginManager().registerListener(this, this);
     }
 
@@ -66,6 +62,7 @@ public class GuildsBungee extends Plugin implements Listener {
             return;
         }
         if (!(e.getSender() instanceof Server)) {
+            e.setCancelled(true);
             return;
         }
         ByteArrayInputStream stream = new ByteArrayInputStream(e.getData());
