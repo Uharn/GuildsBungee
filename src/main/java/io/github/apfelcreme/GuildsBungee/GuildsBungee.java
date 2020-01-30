@@ -53,6 +53,9 @@ public class GuildsBungee extends Plugin implements Listener {
 
     @Override
     public void onEnable() {
+        getProxy().registerChannel("guilds:sync");
+        getProxy().registerChannel("guilds:player");
+        getProxy().registerChannel("guilds:broadcast");
         getProxy().getPluginManager().registerListener(this, this);
     }
 
