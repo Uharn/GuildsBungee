@@ -108,6 +108,15 @@ public class GuildsBungee extends Plugin implements Listener {
                                 in.readInt(),
                                 getProxy().getPlayers().stream().map(p -> p.getUniqueId().toString()).collect(Collectors.joining(" ")));
                         break;
+                    case "contracts":
+                        sendQueueingMessage("sync", "contracts",
+                                getProxy().getPlayers().stream().map(p -> p.getUniqueId().toString()).collect(Collectors.joining(" ")));
+                        break;
+                    case "contract":
+                        sendQueueingMessage("sync", "contract",
+                                in.readInt(),
+                                getProxy().getPlayers().stream().map(p -> p.getUniqueId().toString()).collect(Collectors.joining(" ")));
+                        break;
                     case "alliances":
                         sendQueueingMessage("sync", "alliances");
                         break;
